@@ -1,1 +1,0 @@
-{"type":"module","scripts":{"dev":"vite --host 0.0.0.0 --open /app.html","build":"vite build && node scripts/inline-build.mjs"},"dependencies":{"@vitejs/plugin-react":"latest","vite":"latest","react":"latest","react-dom":"latest","lucide-react":"latest"},"devDependencies":{}}
