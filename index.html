@@ -99,6 +99,13 @@ dialog::backdrop{background:rgba(0,0,0,.45)}
 .dlg-b{padding:8px 16px 18px}
 .toast{position:fixed;z-index:50;left:50%;bottom:calc(env(safe-area-inset-bottom) + 22px);transform:translate(-50%,16px);opacity:0;pointer-events:none;background:var(--ink);color:var(--bg);padding:10px 18px;border-radius:13px;font-weight:600;font-size:14.5px;transition:.2s;max-width:calc(100vw - 32px);text-align:center}
 .toast.show{opacity:1;transform:translate(-50%,0)}.toast.err{background:var(--red);color:#fff}
+.paste-row{display:flex;gap:8px;margin-top:10px;align-items:stretch}
+.paste-row .btn{flex:none}
+.paste-box{flex:1;min-height:48px;border:1px dashed var(--line);border-radius:12px;padding:12px 14px;font-size:14px;color:var(--ink-3);background:var(--surface);overflow:hidden;white-space:nowrap;outline:none;-webkit-user-select:text;user-select:text}
+.paste-box:empty::before{content:attr(data-ph);color:var(--ink-3)}
+.paste-box:focus{border-color:var(--primary);border-style:solid}
+.paste-box img{display:none}
+@media (max-width:420px){.paste-row{flex-direction:column}}
 footer{text-align:center;color:var(--ink-3);font-size:12.5px;margin-top:16px;line-height:1.8}
 @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 </style>
@@ -130,9 +137,13 @@ footer{text-align:center;color:var(--ink-3);font-size:12.5px;margin-top:16px;lin
       <label class="shoot" id="shoot">
         <span class="big"><svg class="ico"><use href="#i-camera"/></svg></span>
         <b>صوّر عبوة الدواء</b>
-        <small>أو اختر صورة. اجعل الاسم والتركيز واضحين في إضاءة جيدة.</small>
+        <small>أو اختر صورة أو الصقها. اجعل الاسم والتركيز واضحين في إضاءة جيدة.</small>
         <input type="file" accept="image/*" id="photo" hidden>
       </label>
+      <div class="paste-row">
+        <button type="button" class="btn btn-soft" id="pasteBtn"><svg class="ico"><use href="#i-paste"/></svg>لصق صورة</button>
+        <div class="paste-box" id="pasteBox" contenteditable="true" role="textbox" aria-label="الصق صورة هنا" data-ph="أو اضغط هنا مطولاً واختر «لصق»"></div>
+      </div>
     </div>
     <div id="previewBox" hidden>
       <div class="preview"><img id="previewImg" alt="صورة الدواء"><button type="button" id="retake">تغيير الصورة</button></div>
@@ -186,9 +197,10 @@ footer{text-align:center;color:var(--ink-3);font-size:12.5px;margin-top:16px;lin
   <symbol id="i-box" viewBox="0 0 24 24"><path d="M3.5 7.5 12 3l8.5 4.5v9L12 21l-8.5-4.5z"/><path d="M3.5 7.5 12 12l8.5-4.5M12 12v9"/></symbol>
   <symbol id="i-share" viewBox="0 0 24 24"><path d="M12 15V3.5M8 7.5l4-4 4 4"/><path d="M6 11H5v9.5h14V11h-1"/></symbol>
   <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4.5 7h15M10 7V4.5h4V7M6.5 7l1 13h9l1-13"/></symbol>
+  <symbol id="i-paste" viewBox="0 0 24 24"><rect x="5.5" y="4.5" width="13" height="16" rx="2"/><path d="M9 4.5V3.5h6v1M9 11h6M9 14.5h4"/></symbol>
   <symbol id="i-chat" viewBox="0 0 24 24"><path d="M4 5.5h16v11H9l-5 4z"/></symbol>
 </defs></svg>
-<script src="app.js?v=4"></script>
+<script src="app.js?v=5"></script>
 <script src="https://adelss12.github.io/back.js" defer></script>
 </body>
 </html>

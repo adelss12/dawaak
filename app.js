@@ -203,15 +203,51 @@ $('keyRemove').addEventListener('click', ()=>{ LS.del(K_KEY); LS.del(K_MODEL); L
 $('clearHist').addEventListener('click', ()=>{ if(confirm('مسح كل السجل من هذا الجهاز؟')){ LS.set(K_HIST, []); renderHistory(); $('settings').close(); } });
 
 /* الالتقاط */
-$('photo').addEventListener('change', async e=>{
+$('photo').addEventListener('change', e=>{
   const f = e.target.files[0]; e.target.value = '';
-  if(!f) return;
+  if(f) useImage(f);
+});
+async function useImage(f){
+  if(!getKey()){ toast('أضف مفتاح Gemini أولاً', true); return; }
   try{
     S.image = await prepareImage(f);
     $('previewImg').src = S.image.dataUrl;
     show('shootBox', false); show('previewBox', true); show('result', false);
     $('analyze').focus();
   }catch(err){ toast('تعذر قراءة الصورة. جرّب صورة أخرى.', true); }
+}
+
+/* لصق صورة: زر الحافظة، أو Ctrl+V، أو الضغط المطوّل في الخانة على الجوال */
+function imageFromClipboardData(dt){
+  for(const it of [...(dt?.items || [])]) if(it.kind === 'file' && /^image\//.test(it.type)) return it.getAsFile();
+  return [...(dt?.files || [])].find(f => /^image\//.test(f.type)) || null;
+}
+document.addEventListener('paste', e=>{
+  if($('capture').hidden) return;
+  const inBox = e.target.closest?.('#pasteBox');
+  if(e.target.closest?.('input, textarea') && !inBox) return; // لصق نص عادي في خانات الكتابة
+  const f = imageFromClipboardData(e.clipboardData);
+  if(f){ e.preventDefault(); $('pasteBox').textContent = ''; useImage(f); }
+  else if(inBox){ e.preventDefault(); toast('لا توجد صورة في الحافظة. انسخ الصورة أولاً.', true); }
+});
+$('pasteBox').addEventListener('input', ()=>{
+  // بعض المتصفحات تُدرج الصورة داخل الخانة بدل إرسالها كملف
+  const img = $('pasteBox').querySelector('img');
+  $('pasteBox').textContent = '';
+  if(img?.src){ fetch(img.src).then(r => r.blob()).then(b => useImage(new File([b], 'pasted', {type:b.type || 'image/png'}))).catch(()=> toast('تعذر قراءة الصورة الملصقة', true)); }
+});
+$('pasteBtn').addEventListener('click', async ()=>{
+  if(!navigator.clipboard?.read){ $('pasteBox').focus(); toast('اضغط مطولاً في الخانة المجاورة واختر «لصق»'); return; }
+  try{
+    for(const item of await navigator.clipboard.read()){
+      const type = item.types.find(t => /^image\//.test(t));
+      if(type){ const b = await item.getType(type); useImage(new File([b], 'pasted', {type})); return; }
+    }
+    toast('لا توجد صورة في الحافظة. انسخ الصورة أولاً.', true);
+  }catch(e){
+    $('pasteBox').focus();
+    toast('لم يُسمح بقراءة الحافظة. اضغط مطولاً في الخانة واختر «لصق».', true);
+  }
 });
 $('retake').addEventListener('click', ()=>{ S.image = null; show('previewBox', false); show('shootBox', true); });
 $('analyze').addEventListener('click', ()=> run({image:S.image, name:$('nameInput').value.trim()}));
