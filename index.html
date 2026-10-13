@@ -43,7 +43,7 @@ button,input,textarea{font:inherit;color:inherit}button{cursor:pointer}
 .input{width:100%;min-height:48px;padding:10px 14px;border-radius:12px;border:1px solid var(--line);background:var(--surface);font-size:16px;outline:none}
 .input:focus{border-color:var(--primary);box-shadow:0 0 0 3px color-mix(in srgb,var(--primary) 22%,transparent)}
 textarea.input{min-height:80px;resize:vertical}
-.msg{font-size:14px;margin:8px 0 0}.msg.err{color:var(--red)}.msg.ok{color:var(--primary)}
+.msg{font-size:14px;margin:8px 0 0;white-space:pre-line;word-break:break-word}.msg.err{color:var(--red)}.msg.ok{color:var(--primary)}
 
 /* الإعداد */
 .steps{margin:6px 0 14px;padding:0;list-style:none;counter-reset:s}
@@ -119,7 +119,7 @@ footer{text-align:center;color:var(--ink-3);font-size:12.5px;margin-top:16px;lin
       <li><span>اضغط <b>Create API key</b> ثم انسخ المفتاح.</span></li>
       <li><span>الصقه هنا واضغط حفظ.</span></li>
     </ol>
-    <input class="input" id="keyInput" dir="ltr" autocomplete="off" placeholder="AIza…" aria-label="مفتاح Gemini">
+    <input class="input" id="keyInput" dir="ltr" autocomplete="off" placeholder="الصق المفتاح هنا" aria-label="مفتاح Gemini">
     <p class="msg" id="keyMsg"></p>
     <button type="button" class="btn btn-primary btn-block" id="keySave" style="margin-top:10px">حفظ والتحقق</button>
   </section>
@@ -188,7 +188,7 @@ footer{text-align:center;color:var(--ink-3);font-size:12.5px;margin-top:16px;lin
   <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4.5 7h15M10 7V4.5h4V7M6.5 7l1 13h9l1-13"/></symbol>
   <symbol id="i-chat" viewBox="0 0 24 24"><path d="M4 5.5h16v11H9l-5 4z"/></symbol>
 </defs></svg>
-<script src="app.js?v=2"></script>
+<script src="app.js?v=3"></script>
 <script src="https://adelss12.github.io/back.js" defer></script>
 </body>
 </html>

@@ -39,7 +39,7 @@ async function apiError(r){
   let msg = '';
   try{ msg = (await r.json()).error?.message || ''; }catch(e){}
   const e = new Error(msg || `HTTP ${r.status}`); e.status = r.status;
-  if(r.status === 400 && /API key/i.test(msg)) e.friendly = 'المفتاح غير صحيح. انسخه من جديد من Google AI Studio.';
+  if((r.status === 400 || r.status === 401) && /key|credential|auth/i.test(msg)) e.friendly = 'المفتاح غير صحيح. انسخه من جديد من Google AI Studio.';
   else if(r.status === 403) e.friendly = 'المفتاح لا يملك صلاحية. تأكد أنك أنشأته من Google AI Studio.';
   else if(r.status === 429) e.friendly = 'تجاوزت الحد المجاني المسموح مؤقتاً. انتظر دقيقة ثم أعد المحاولة.';
   else if(r.status >= 500) e.friendly = 'خدمة Google مشغولة الآن. أعد المحاولة بعد قليل.';
@@ -150,8 +150,9 @@ function refreshHome(){
 
 /* الإعداد */
 async function verifyAndSave(key, msgEl){
-  key = key.trim();
-  if(!/^AIza[\w-]{20,}$/.test(key)){ msgEl.className = 'msg err'; msgEl.textContent = 'شكل المفتاح غير صحيح. يبدأ عادة بـ AIza.'; return false; }
+  // إزالة المسافات والأسطر وعلامات الاقتباس التي قد تُلصق مع المفتاح
+  key = String(key || '').replace(/[\s"'“”‘’<>]/g, '');
+  if(key.length < 20){ msgEl.className = 'msg err'; msgEl.textContent = 'المفتاح قصير أو ناقص. انسخه كاملاً بزر النسخ في Google AI Studio.'; return false; }
   msgEl.className = 'msg'; msgEl.textContent = 'جارٍ التحقق…';
   try{
     LS.del(K_MODEL);
@@ -160,7 +161,8 @@ async function verifyAndSave(key, msgEl){
     msgEl.className = 'msg ok'; msgEl.textContent = `تم الحفظ. النموذج المستخدم: ${model}`;
     return true;
   }catch(e){
-    msgEl.className = 'msg err'; msgEl.textContent = e.friendly || 'تعذر التحقق من المفتاح. تحقق من الإنترنت.';
+    msgEl.className = 'msg err';
+    msgEl.textContent = (e.friendly || 'تعذر التحقق من المفتاح. تحقق من الإنترنت.') + (e.message && !/^HTTP/.test(e.message) ? `\nرسالة Google: ${e.message}` : (e.status ? ` (رمز ${e.status})` : ''));
     return false;
   }
 }
