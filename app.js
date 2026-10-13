@@ -14,13 +14,38 @@ function toast(m, err=false){ const t = $('toast'); t.textContent = m; t.classNa
 const API = 'https://generativelanguage.googleapis.com/v1beta';
 const K_KEY = 'dawaak_gemini_key', K_MODEL = 'dawaak_gemini_model', K_HIST = 'dawaak_history_v2';
 const getKey = () => LS.get(K_KEY, '');
+const K_MODE = 'dawaak_key_mode';
+/* نرسل المفتاح في الترويسة x-goog-api-key، وإن فشل نجرّب ?key= (المفاتيح الجديدة AQ. والقديمة AIza) */
+async function gfetch(path, key, init={}){
+  const modes = LS.get(K_MODE, '') === 'query' ? ['query','header'] : ['header','query'];
+  let last;
+  for(const mode of modes){
+    try{
+      const url = mode === 'query' ? `${API}${path}${path.includes('?') ? '&' : '?'}key=${encodeURIComponent(key)}` : `${API}${path}`;
+      const headers = {...(init.headers || {})};
+      if(mode === 'header') headers['x-goog-api-key'] = key;
+      const r = await fetch(url, {...init, headers});
+      if(r.ok || ![400,401,403].includes(r.status)){ if(r.ok) LS.set(K_MODE, mode); return r; }
+      last = r;
+    }catch(e){ last = e; }
+  }
+  if(last instanceof Response) return last;
+  throw last;
+}
+
 
 /* نختار أحدث نموذج Flash متاح للمفتاح بدل تثبيت اسم قد يتغير */
 async function pickModel(key, force=false){
   const cached = LS.get(K_MODEL, '');
   if(cached && !force) return cached;
-  const r = await fetch(`${API}/models?pageSize=200&key=${encodeURIComponent(key)}`);
-  if(!r.ok) throw await apiError(r);
+  const r = await gfetch('/models?pageSize=200', key);
+  if(!r.ok){
+    // بعض المفاتيح لا تسمح بعرض قائمة النماذج؛ نتحقق بطلب صغير مباشرة
+    const e = await apiError(r);
+    const t = await gfetch('/models/gemini-flash-latest:generateContent', key, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({contents:[{parts:[{text:'ping'}]}], generationConfig:{maxOutputTokens:5}})});
+    if(t.ok){ LS.set(K_MODEL, 'gemini-flash-latest'); return 'gemini-flash-latest'; }
+    throw e;
+  }
   const list = ((await r.json()).models || [])
     .filter(m => (m.supportedGenerationMethods || []).includes('generateContent'))
     .map(m => m.name.replace(/^models\//, ''))
@@ -49,7 +74,7 @@ async function gemini(body, {retryModel=true}={}){
   const key = getKey();
   if(!key) throw Object.assign(new Error('nokey'), {friendly:'أضف مفتاح Gemini أولاً من الإعدادات.'});
   const model = await pickModel(key);
-  const r = await fetch(`${API}/models/${model}:generateContent?key=${encodeURIComponent(key)}`, {
+  const r = await gfetch(`/models/${model}:generateContent`, key, {
     method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)
   });
   if(r.status === 404 && retryModel){ LS.del(K_MODEL); await pickModel(key, true); return gemini(body, {retryModel:false}); }
@@ -155,7 +180,7 @@ async function verifyAndSave(key, msgEl){
   if(key.length < 20){ msgEl.className = 'msg err'; msgEl.textContent = 'المفتاح قصير أو ناقص. انسخه كاملاً بزر النسخ في Google AI Studio.'; return false; }
   msgEl.className = 'msg'; msgEl.textContent = 'جارٍ التحقق…';
   try{
-    LS.del(K_MODEL);
+    LS.del(K_MODEL); LS.del(K_MODE);
     const model = await pickModel(key, true);
     LS.set(K_KEY, key);
     msgEl.className = 'msg ok'; msgEl.textContent = `تم الحفظ. النموذج المستخدم: ${model}`;
@@ -174,7 +199,7 @@ $('settingsBtn').addEventListener('click', ()=>{
 });
 $('settings').addEventListener('click', e=>{ if(e.target === $('settings') || e.target.closest('[data-close]')) $('settings').close(); });
 $('keyEditSave').addEventListener('click', async ()=>{ if(await verifyAndSave($('keyEdit').value, $('keyEditMsg'))) refreshHome(); });
-$('keyRemove').addEventListener('click', ()=>{ LS.del(K_KEY); LS.del(K_MODEL); $('settings').close(); refreshHome(); toast('حُذف المفتاح'); });
+$('keyRemove').addEventListener('click', ()=>{ LS.del(K_KEY); LS.del(K_MODEL); LS.del(K_MODE); $('settings').close(); refreshHome(); toast('حُذف المفتاح'); });
 $('clearHist').addEventListener('click', ()=>{ if(confirm('مسح كل السجل من هذا الجهاز؟')){ LS.set(K_HIST, []); renderHistory(); $('settings').close(); } });
 
 /* الالتقاط */
