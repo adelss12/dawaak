@@ -35,31 +35,37 @@ async function gfetch(path, key, init={}){
 
 
 /* نختار أحدث نموذج Flash متاح للمفتاح بدل تثبيت اسم قد يتغير */
-async function pickModel(key, force=false){
-  const cached = LS.get(K_MODEL, '');
-  if(cached && !force) return cached;
+const K_MODELS = 'dawaak_gemini_models';
+/* نحصل على قائمة نماذج Flash المتاحة لمفتاحك ونرتبها: الأحدث المستقر أولاً، ثم البدائل */
+async function pickModels(key, force=false){
+  const cached = LS.get(K_MODELS, null);
+  if(cached && cached.length && !force) return cached;
+  let names = [];
   const r = await gfetch('/models?pageSize=200', key);
-  if(!r.ok){
-    // بعض المفاتيح لا تسمح بعرض قائمة النماذج؛ نتحقق بطلب صغير مباشرة
+  if(r.ok){
+    names = ((await r.json()).models || [])
+      .filter(m => (m.supportedGenerationMethods || []).includes('generateContent'))
+      .map(m => m.name.replace(/^models\//, ''))
+      .filter(n => /^gemini-/.test(n) && /flash/.test(n) && !/(image|tts|audio|live|thinking|exp|embedding|native)/.test(n));
+  }else{
     const e = await apiError(r);
-    const t = await gfetch('/models/gemini-flash-latest:generateContent', key, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({contents:[{parts:[{text:'ping'}]}], generationConfig:{maxOutputTokens:5}})});
-    if(t.ok){ LS.set(K_MODEL, 'gemini-flash-latest'); return 'gemini-flash-latest'; }
-    throw e;
+    if([400,401,403].includes(r.status)) throw e;
   }
-  const list = ((await r.json()).models || [])
-    .filter(m => (m.supportedGenerationMethods || []).includes('generateContent'))
-    .map(m => m.name.replace(/^models\//, ''))
-    .filter(n => /^gemini-/.test(n) && /flash/.test(n) && !/(lite|image|tts|audio|live|thinking|exp|embedding)/.test(n));
+  const ver = n => parseFloat((n.match(/gemini-(\d+(?:\.\d+)?)/) || [])[1] || 0);
   const score = n => {
-    if(n === 'gemini-flash-latest') return 1e6;
-    const v = parseFloat((n.match(/gemini-(\d+(?:\.\d+)?)/) || [])[1] || 0);
-    return v * 100 - (/preview/.test(n) ? 50 : 0) - (/-\d{3,}$|\d{2}-\d{2}/.test(n) ? 1 : 0);
+    if(n === 'gemini-flash-latest') return 500;
+    let s = ver(n) * 100;
+    if(/preview/.test(n)) s -= 300;          // المعاينات أقل ثباتاً وأكثر انشغالاً
+    if(/lite/.test(n)) s -= 60;              // الخفيف بديل أخير
+    if(/-\d{3}$|\d{2}-\d{2}/.test(n)) s -= 1;
+    return s;
   };
-  list.sort((a, b) => score(b) - score(a));
-  const model = list[0] || 'gemini-2.5-flash';
-  LS.set(K_MODEL, model);
-  return model;
+  names = [...new Set([...names, 'gemini-2.5-flash', 'gemini-flash-latest', 'gemini-2.5-flash-lite'])].sort((x, y) => score(y) - score(x)).slice(0, 5);
+  LS.set(K_MODELS, names);
+  LS.set(K_MODEL, names[0]);
+  return names;
 }
+async function pickModel(key, force=false){ return (await pickModels(key, force))[0]; }
 async function apiError(r){
   let msg = '';
   try{ msg = (await r.json()).error?.message || ''; }catch(e){}
@@ -67,22 +73,42 @@ async function apiError(r){
   if((r.status === 400 || r.status === 401) && /key|credential|auth/i.test(msg)) e.friendly = 'المفتاح غير صحيح. انسخه من جديد من Google AI Studio.';
   else if(r.status === 403) e.friendly = 'المفتاح لا يملك صلاحية. تأكد أنك أنشأته من Google AI Studio.';
   else if(r.status === 429) e.friendly = 'تجاوزت الحد المجاني المسموح مؤقتاً. انتظر دقيقة ثم أعد المحاولة.';
-  else if(r.status >= 500) e.friendly = 'خدمة Google مشغولة الآن. أعد المحاولة بعد قليل.';
+  else if(r.status >= 500) e.friendly = 'خدمة Google مشغولة الآن على كل النماذج المتاحة. أعد المحاولة بعد دقيقة.';
   return e;
 }
-async function gemini(body, {retryModel=true}={}){
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+let onAttempt = null; // لإظهار حالة المحاولات في الواجهة
+async function gemini(body){
   const key = getKey();
   if(!key) throw Object.assign(new Error('nokey'), {friendly:'أضف مفتاح Gemini أولاً من الإعدادات.'});
-  const model = await pickModel(key);
-  const r = await gfetch(`/models/${model}:generateContent`, key, {
-    method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)
-  });
-  if(r.status === 404 && retryModel){ LS.del(K_MODEL); await pickModel(key, true); return gemini(body, {retryModel:false}); }
-  if(!r.ok) throw await apiError(r);
-  const j = await r.json();
-  const cand = j.candidates?.[0];
-  if(!cand || cand.finishReason === 'SAFETY') throw Object.assign(new Error('blocked'), {friendly:'لم تُرجع الخدمة إجابة لهذه الصورة. جرّب صورة أوضح للعبوة.'});
-  return (cand.content?.parts || []).map(p => p.text || '').join('');
+  let models = await pickModels(key);
+  let lastErr = null, useSchema = true, refreshed = false;
+  for(let mi = 0; mi < models.length; mi++){
+    const model = models[mi];
+    for(let attempt = 0; attempt < 3; attempt++){
+      const b = useSchema ? body : {...body, generationConfig:{...body.generationConfig, responseSchema:undefined}};
+      const r = await gfetch(`/models/${model}:generateContent`, key, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(b)});
+      if(r.ok){
+        const j = await r.json();
+        const cand = j.candidates?.[0];
+        if(!cand || cand.finishReason === 'SAFETY' || cand.finishReason === 'PROHIBITED_CONTENT') throw Object.assign(new Error('blocked'), {friendly:'لم تُرجع الخدمة إجابة لهذه الصورة. جرّب صورة أوضح للعبوة.'});
+        if(mi > 0){ LS.set(K_MODEL, model); LS.set(K_MODELS, [model, ...models.filter(m => m !== model)]); } // نبدأ به في المرة القادمة
+        return (cand.content?.parts || []).map(p => p.text || '').join('');
+      }
+      lastErr = await apiError(r);
+      lastErr.model = model;
+      if(r.status === 404){
+        if(!refreshed){ refreshed = true; LS.del(K_MODELS); models = await pickModels(key, true); mi = -1; }
+        break; // جرّب النموذج التالي
+      }
+      if(r.status === 400 && /schema|response_schema|responseSchema|mime/i.test(lastErr.message) && useSchema){ useSchema = false; attempt--; continue; }
+      if([400,401,403].includes(r.status)) throw lastErr;
+      // 429 أو 5xx: انتظار ثم إعادة، وبعدها ننتقل لنموذج آخر
+      onAttempt?.(mi, attempt);
+      if(attempt < 2) await sleep(1500 * (attempt + 1) + Math.random() * 500);
+    }
+  }
+  throw lastErr || new Error('failed');
 }
 
 const SYSTEM = `أنت صيدلي سريري يشرح الأدوية لمستخدم في السعودية بلغة عربية بسيطة وواضحة.
@@ -128,7 +154,7 @@ async function identify({image, name}){
     contents:[{role:'user', parts}],
     generationConfig:{temperature:0.2, responseMimeType:'application/json', responseSchema:SCHEMA}
   });
-  try{ return JSON.parse(text); }
+  try{ return JSON.parse(text.replace(/^```(?:json)?\s*|\s*```$/g, '')); }
   catch(e){ throw Object.assign(new Error('parse'), {friendly:'وصلت إجابة غير مكتملة. أعد المحاولة.'}); }
 }
 async function askFollowUp(drug, question, prev){
@@ -180,7 +206,7 @@ async function verifyAndSave(key, msgEl){
   if(key.length < 20){ msgEl.className = 'msg err'; msgEl.textContent = 'المفتاح قصير أو ناقص. انسخه كاملاً بزر النسخ في Google AI Studio.'; return false; }
   msgEl.className = 'msg'; msgEl.textContent = 'جارٍ التحقق…';
   try{
-    LS.del(K_MODEL); LS.del(K_MODE);
+    LS.del(K_MODEL); LS.del(K_MODE); LS.del(K_MODELS);
     const model = await pickModel(key, true);
     LS.set(K_KEY, key);
     msgEl.className = 'msg ok'; msgEl.textContent = `تم الحفظ. النموذج المستخدم: ${model}`;
@@ -194,12 +220,12 @@ async function verifyAndSave(key, msgEl){
 $('keySave').addEventListener('click', async ()=>{ if(await verifyAndSave($('keyInput').value, $('keyMsg'))) setTimeout(refreshHome, 600); });
 $('settingsBtn').addEventListener('click', ()=>{
   $('keyEdit').value = getKey(); $('keyEditMsg').textContent = '';
-  $('modelInfo').textContent = LS.get(K_MODEL, '') ? `النموذج الحالي: ${LS.get(K_MODEL, '')}. المفتاح محفوظ على هذا الجهاز فقط ويُرسل إلى Google وحدها.` : '';
+  $('modelInfo').textContent = LS.get(K_MODEL, '') ? `النموذج الحالي: ${LS.get(K_MODEL, '')}، والبدائل: ${(LS.get(K_MODELS, []) || []).slice(1).join('، ') || '—'}. المفتاح محفوظ على هذا الجهاز فقط ويُرسل إلى Google وحدها.` : '';
   $('settings').showModal();
 });
 $('settings').addEventListener('click', e=>{ if(e.target === $('settings') || e.target.closest('[data-close]')) $('settings').close(); });
 $('keyEditSave').addEventListener('click', async ()=>{ if(await verifyAndSave($('keyEdit').value, $('keyEditMsg'))) refreshHome(); });
-$('keyRemove').addEventListener('click', ()=>{ LS.del(K_KEY); LS.del(K_MODEL); LS.del(K_MODE); $('settings').close(); refreshHome(); toast('حُذف المفتاح'); });
+$('keyRemove').addEventListener('click', ()=>{ LS.del(K_KEY); LS.del(K_MODEL); LS.del(K_MODE); LS.del(K_MODELS); $('settings').close(); refreshHome(); toast('حُذف المفتاح'); });
 $('clearHist').addEventListener('click', ()=>{ if(confirm('مسح كل السجل من هذا الجهاز؟')){ LS.set(K_HIST, []); renderHistory(); $('settings').close(); } });
 
 /* الالتقاط */
@@ -259,6 +285,7 @@ async function run({image, name}){
   show('result', false); show('loading', true);
   let i = 0; $('loadingText').textContent = image ? STEPS[0] : 'جارٍ البحث عن الدواء…';
   const tm = setInterval(()=>{ if(image && i < STEPS.length - 1) $('loadingText').textContent = STEPS[++i]; }, 2500);
+  onAttempt = (mi, attempt)=>{ $('loadingText').textContent = mi === 0 ? `الخدمة مشغولة، نعيد المحاولة (${attempt + 2})…` : 'نجرّب نموذجاً بديلاً…'; };
   $('loading').scrollIntoView({behavior:'smooth', block:'center'});
   try{
     const drug = await identify({image, name});
@@ -268,7 +295,8 @@ async function run({image, name}){
     renderResult();
   }catch(e){
     console.error(e);
-    $('result').innerHTML = `<p class="msg err" style="margin:0">${esc(e.friendly || 'تعذر الاتصال بالخدمة. تحقق من الإنترنت ثم أعد المحاولة.')}</p>
+    const det = e.status ? `\n(رمز ${e.status}${e.model ? ' · ' + e.model : ''}${e.message && !/^HTTP/.test(e.message) ? ' · ' + e.message : ''})` : '';
+    $('result').innerHTML = `<p class="msg err" style="margin:0">${esc((e.friendly || 'تعذر الاتصال بالخدمة. تحقق من الإنترنت ثم أعد المحاولة.') + det)}</p>
       <div class="actions"><button type="button" class="btn btn-soft" id="again">إعادة المحاولة</button></div>`;
     show('result', true);
     $('again').onclick = ()=> run({image, name});
