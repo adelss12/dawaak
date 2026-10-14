@@ -209,6 +209,7 @@ async function verifyAndSave(key, msgEl){
     LS.del(K_MODEL); LS.del(K_MODE); LS.del(K_MODELS);
     const model = await pickModel(key, true);
     LS.set(K_KEY, key);
+    persistStorage();
     msgEl.className = 'msg ok'; msgEl.textContent = `تم الحفظ. النموذج المستخدم: ${model}`;
     return true;
   }catch(e){
@@ -217,6 +218,21 @@ async function verifyAndSave(key, msgEl){
     return false;
   }
 }
+/* زر «لصق» للمفتاح: يقرأ النص من الحافظة مباشرة */
+$('keyPaste').addEventListener('click', async ()=>{
+  try{
+    const t = (await navigator.clipboard.readText()).trim();
+    if(!t){ toast('الحافظة فارغة. انسخ المفتاح أولاً.', true); return; }
+    $('keyInput').value = t;
+  }catch(e){
+    $('keyInput').focus();
+    toast('اضغط مطولاً في خانة المفتاح واختر «لصق»');
+  }
+});
+/* نطلب من المتصفح حفظ بيانات البرنامج (المفتاح والسجل) بشكل دائم حتى لا يمسحها عند امتلاء الذاكرة */
+function persistStorage(){ try{ navigator.storage?.persist?.(); }catch(e){} }
+persistStorage();
+
 $('keySave').addEventListener('click', async ()=>{ if(await verifyAndSave($('keyInput').value, $('keyMsg'))) setTimeout(refreshHome, 600); });
 $('settingsBtn').addEventListener('click', ()=>{
   $('keyEdit').value = getKey(); $('keyEditMsg').textContent = '';
