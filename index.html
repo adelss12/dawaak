@@ -101,6 +101,9 @@ dialog::backdrop{background:rgba(0,0,0,.45)}
 .dlg-b{padding:8px 16px 18px}
 .toast{position:fixed;z-index:50;left:50%;bottom:calc(env(safe-area-inset-bottom) + 22px);transform:translate(-50%,16px);opacity:0;pointer-events:none;background:var(--ink);color:var(--bg);padding:10px 18px;border-radius:13px;font-weight:600;font-size:14.5px;transition:.2s;max-width:calc(100vw - 32px);text-align:center}
 .toast.show{opacity:1;transform:translate(-50%,0)}.toast.err{background:var(--red);color:#fff}
+.toast.undo{display:flex;align-items:center;gap:14px;padding:8px 10px 8px 18px}.toast.undo.show{pointer-events:auto}
+.toast.undo button{border:0;border-radius:9px;background:var(--primary);color:var(--primary-ink);font-weight:700;padding:7px 14px;font-size:14px}
+.btn-danger{background:var(--red);color:#fff;border:0}.btn-danger:disabled{opacity:.4}
 .paste-row{display:flex;gap:8px;margin-top:10px;align-items:stretch}
 .paste-row .btn{flex:none}
 .paste-box{flex:1;min-height:48px;border:1px dashed var(--line);border-radius:12px;padding:12px 14px;font-size:14px;color:var(--ink-3);background:var(--surface);overflow:hidden;white-space:nowrap;outline:none;-webkit-user-select:text;user-select:text}
@@ -192,7 +195,22 @@ footer{text-align:center;color:var(--ink-3);font-size:12.5px;margin-top:16px;lin
     <button type="button" class="btn btn-line btn-block" id="clearHist" style="margin-top:8px">مسح سجل البحث</button>
   </div>
 </dialog>
+<dialog id="clearDlg">
+  <div class="dlg-h"><h2 style="color:var(--red)">مسح سجل البحث</h2><button type="button" class="icon-btn" data-close aria-label="إغلاق"><svg class="ico"><use href="#i-x"/></svg></button></div>
+  <form class="dlg-b" id="clearForm">
+    <div class="sec alert" style="margin-top:0"><p style="margin:0">سيُحذف <b id="clrCount"></b> بحث من هذا الجهاز، مع الملخصات والأسئلة المحفوظة.<br>لا يمكن استرجاعها لاحقاً إلا من نسخة احتياطية.</p></div>
+    <button type="button" class="btn btn-soft btn-block" id="clrBackup" style="margin-top:12px">حفظ نسخة احتياطية أولاً</button>
+    <p class="msg" id="clrMsg"></p>
+    <label for="clrInput" style="display:block;font-weight:700;font-size:14px;margin-top:14px">للتأكيد اكتب كلمة «مسح»</label>
+    <input class="input" id="clrInput" autocomplete="off" style="margin-top:6px" placeholder="مسح">
+    <div class="actions">
+      <button type="submit" class="btn btn-danger" id="clrGo" disabled>مسح السجل</button>
+      <button type="button" class="btn btn-line" data-close>إلغاء</button>
+    </div>
+  </form>
+</dialog>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
+<div class="toast undo" id="undoToast" role="status" aria-live="polite"><span id="undoText"></span><button type="button" id="undoBtn">تراجع</button></div>
 
 <svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
   <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></symbol>
@@ -214,7 +232,7 @@ footer{text-align:center;color:var(--ink-3);font-size:12.5px;margin-top:16px;lin
   <symbol id="i-paste" viewBox="0 0 24 24"><rect x="5.5" y="4.5" width="13" height="16" rx="2"/><path d="M9 4.5V3.5h6v1M9 11h6M9 14.5h4"/></symbol>
   <symbol id="i-chat" viewBox="0 0 24 24"><path d="M4 5.5h16v11H9l-5 4z"/></symbol>
 </defs></svg>
-<script src="app.js?v=8"></script>
+<script src="app.js?v=9"></script>
 <script src="https://adelss12.github.io/back.js" defer></script>
 </body>
 </html>

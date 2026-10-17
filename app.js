@@ -242,7 +242,7 @@ $('settingsBtn').addEventListener('click', ()=>{
 $('settings').addEventListener('click', e=>{ if(e.target === $('settings') || e.target.closest('[data-close]')) $('settings').close(); });
 $('keyEditSave').addEventListener('click', async ()=>{ if(await verifyAndSave($('keyEdit').value, $('keyEditMsg'))) refreshHome(); });
 $('keyRemove').addEventListener('click', ()=>{ LS.del(K_KEY); LS.del(K_MODEL); LS.del(K_MODE); LS.del(K_MODELS); $('settings').close(); refreshHome(); toast('حُذف المفتاح'); });
-$('clearHist').addEventListener('click', async ()=>{ if(confirm('مسح كل سجل البحث من هذا الجهاز؟ (يُنصح بحفظ نسخة احتياطية أولاً)')){ await Log.clear(); renderHistory(); $('settings').close(); } });
+$('clearHist').addEventListener('click', openClearDialog);
 
 /* الالتقاط */
 $('photo').addEventListener('change', e=>{
@@ -474,7 +474,12 @@ $('histFilter').addEventListener('input', e=>{ H.filter = e.target.value; H.show
 $('histMore').addEventListener('click', ()=>{ H.shown += 30; renderHistory(); });
 $('history').addEventListener('click', async e=>{
   const o = e.target.closest('[data-open]'), d = e.target.closest('[data-del]');
-  if(d){ await Log.del(+d.dataset.del); renderHistory(); return; }
+  if(d){
+    const x = H.all.find(i => i.id === +d.dataset.del);
+    await Log.del(+d.dataset.del); renderHistory();
+    if(x) undoToast(`حُذف «${titleOf(x)}» من السجل`, async ()=>{ await Log.put(x); renderHistory(); });
+    return;
+  }
   if(!o) return;
   const x = H.all.find(i => i.id === +o.dataset.open);
   if(!x) return;
@@ -484,7 +489,8 @@ $('history').addEventListener('click', async e=>{
 });
 
 /* نسخة احتياطية من السجل (ملف) واستعادتها */
-$('histExport').addEventListener('click', async ()=>{
+$('histExport').addEventListener('click', ()=> exportLog());
+async function exportLog(){
   const data = JSON.stringify({app:'dawaak', version:1, exported:new Date().toISOString(), searches:await Log.all()});
   const name = `سجل-دوائي-${new Date().toISOString().slice(0, 10)}.json`;
   const file = new File([data], name, {type:'application/json'});
@@ -493,7 +499,8 @@ $('histExport').addEventListener('click', async ()=>{
   }catch(e){ if(e.name === 'AbortError') return; }
   const a = document.createElement('a'); a.href = URL.createObjectURL(file); a.download = name; a.click();
   setTimeout(()=> URL.revokeObjectURL(a.href), 4000);
-});
+  return true;
+}
 $('histImport').addEventListener('click', ()=> $('histFile').click());
 $('histFile').addEventListener('change', async e=>{
   const f = e.target.files[0]; e.target.value = '';
@@ -505,6 +512,43 @@ $('histFile').addEventListener('change', async e=>{
     toast(`استُعيد ${items.length} بحث`); $('settings').close(); renderHistory();
   }catch(err){ toast('الملف غير صالح', true); }
 });
+
+/* نافذة مسح السجل كاملاً: داخل البرنامج، مع نسخة احتياطية وكتابة «مسح» للتأكيد، ثم إمكانية التراجع */
+const CONFIRM_WORD = 'مسح';
+const norm = t => String(t || '').replace(/[\u064B-\u0652\u0640\s]/g, '');
+async function openClearDialog(){
+  const all = await Log.all();
+  $('settings').close();
+  if(!all.length){ toast('السجل فارغ'); return; }
+  $('clrCount').textContent = all.length;
+  $('clrInput').value = ''; $('clrGo').disabled = true; $('clrMsg').textContent = '';
+  $('clearDlg').showModal();
+  setTimeout(()=> $('clrInput').focus(), 50);
+}
+$('clrInput').addEventListener('input', e=>{ $('clrGo').disabled = norm(e.target.value) !== CONFIRM_WORD; });
+$('clrBackup').addEventListener('click', async ()=>{
+  try{ if(await exportLog()){ $('clrMsg').className = 'msg ok'; $('clrMsg').textContent = 'تم تجهيز النسخة الاحتياطية. احفظ الملف ثم أكمل المسح إن أردت.'; } }catch(e){}
+});
+$('clearDlg').addEventListener('click', e=>{ if(e.target === $('clearDlg') || e.target.closest('[data-close]')) $('clearDlg').close(); });
+$('clearForm').addEventListener('submit', async e=>{
+  e.preventDefault();
+  if(norm($('clrInput').value) !== CONFIRM_WORD) return;
+  const snapshot = await Log.all();
+  await Log.clear();
+  $('clearDlg').close();
+  renderHistory();
+  undoToast(`مُسح السجل (${snapshot.length} بحث)`, async ()=>{ for(const x of snapshot) await Log.put(x); renderHistory(); toast('استُعيد السجل'); }, 10000);
+});
+
+/* إشعار مع زر «تراجع» */
+function undoToast(msg, undo, ms=7000){
+  const t = $('undoToast');
+  $('undoText').textContent = msg;
+  t.classList.add('show');
+  clearTimeout(t._t);
+  $('undoBtn').onclick = async ()=>{ t.classList.remove('show'); clearTimeout(t._t); await undo(); };
+  t._t = setTimeout(()=> t.classList.remove('show'), ms);
+}
 
 Log.migrate().then(renderHistory);
 
