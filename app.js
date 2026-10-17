@@ -242,7 +242,7 @@ $('settingsBtn').addEventListener('click', ()=>{
 $('settings').addEventListener('click', e=>{ if(e.target === $('settings') || e.target.closest('[data-close]')) $('settings').close(); });
 $('keyEditSave').addEventListener('click', async ()=>{ if(await verifyAndSave($('keyEdit').value, $('keyEditMsg'))) refreshHome(); });
 $('keyRemove').addEventListener('click', ()=>{ LS.del(K_KEY); LS.del(K_MODEL); LS.del(K_MODE); LS.del(K_MODELS); $('settings').close(); refreshHome(); toast('حُذف المفتاح'); });
-$('clearHist').addEventListener('click', ()=>{ if(confirm('مسح كل السجل من هذا الجهاز؟')){ LS.set(K_HIST, []); renderHistory(); $('settings').close(); } });
+$('clearHist').addEventListener('click', async ()=>{ if(confirm('مسح كل سجل البحث من هذا الجهاز؟ (يُنصح بحفظ نسخة احتياطية أولاً)')){ await Log.clear(); renderHistory(); $('settings').close(); } });
 
 /* الالتقاط */
 $('photo').addEventListener('change', e=>{
@@ -305,12 +305,16 @@ async function run({image, name}){
   $('loading').scrollIntoView({behavior:'smooth', block:'center'});
   try{
     const drug = await identify({image, name});
-    S.current = {drug, thumb:image?.thumb || '', at:Date.now(), id:Date.now(), query:name};
-    S.qa = [];
-    if(drug.isMedicine) saveHistory(S.current);
+    S.current = {drug, thumb:image?.thumb || '', at:Date.now(), id:Date.now(), query:name || '',
+                 kind:image ? 'image' : 'name', status:drug.isMedicine ? 'ok' : 'notmed', qa:[]};
+    S.qa = S.current.qa;
+    await Log.put(S.current);
+    renderHistory();
     renderResult();
   }catch(e){
     console.error(e);
+    Log.put({id:Date.now(), at:Date.now(), kind:image ? 'image' : 'name', query:name || '', thumb:image?.thumb || '',
+             status:'error', error:e.friendly || 'تعذر الاتصال بالخدمة', qa:[]}).then(renderHistory);
     const det = e.status ? `\n(رمز ${e.status}${e.model ? ' · ' + e.model : ''}${e.message && !/^HTTP/.test(e.message) ? ' · ' + e.message : ''})` : '';
     $('result').innerHTML = `<p class="msg err" style="margin:0">${esc((e.friendly || 'تعذر الاتصال بالخدمة. تحقق من الإنترنت ثم أعد المحاولة.') + det)}</p>
       <div class="actions"><button type="button" class="btn btn-soft" id="again">إعادة المحاولة</button></div>`;
@@ -373,6 +377,7 @@ function renderResult(){
     try{ S.qa[S.qa.length - 1].a = (await askFollowUp(S.current.drug, q, S.qa.slice(0, -1))).trim(); }
     catch(err){ S.qa[S.qa.length - 1].a = err.friendly || 'تعذر الحصول على إجابة الآن.'; }
     btn.disabled = false; renderQA();
+    if(S.current?.id){ S.current.qa = S.qa; Log.put(S.current); }
   });
   $('shareRes').addEventListener('click', shareSummary);
   $('newRes').addEventListener('click', ()=>{ S.image = null; show('previewBox', false); show('shootBox', true); show('result', false); $('nameInput').value = ''; window.scrollTo({top:0, behavior:'smooth'}); });
@@ -393,27 +398,114 @@ async function shareSummary(){
   }catch(e){ if(e.name !== 'AbortError'){ try{ await navigator.clipboard.writeText(text); toast('نُسخ الملخص'); }catch(_){} } }
 }
 
-/* السجل */
-function saveHistory(item){
-  let h = LS.get(K_HIST, []);
-  const key = (item.drug.nameEn || item.drug.nameAr || '').toLowerCase();
-  h = h.filter(x => (x.drug.nameEn || x.drug.nameAr || '').toLowerCase() !== key);
-  h.unshift(item);
-  h = h.slice(0, 30);
-  while(!LS.set(K_HIST, h) && h.length > 1) h.pop();
+/* ============ سجل البحث: كل عملية بحث تُحفظ في IndexedDB على هذا الجهاز ============ */
+const Log = (()=>{
+  const DB = 'dawaak', STORE = 'searches';
+  let dbp = null, mem = null;          // mem: احتياطي في الذاكرة إن تعذر IndexedDB (التصفح الخاص)
+  function open(){
+    if(dbp) return dbp;
+    dbp = new Promise((res, rej)=>{
+      try{
+        const r = indexedDB.open(DB, 1);
+        r.onupgradeneeded = ()=> r.result.createObjectStore(STORE, {keyPath:'id'});
+        r.onsuccess = ()=> res(r.result);
+        r.onerror = ()=> rej(r.error);
+      }catch(e){ rej(e); }
+    }).catch(e=>{ mem = mem || []; return null; });
+    return dbp;
+  }
+  async function tx(mode, fn){
+    const db = await open();
+    if(!db) return fn(null);
+    return new Promise((res, rej)=>{
+      const t = db.transaction(STORE, mode), st = t.objectStore(STORE);
+      let out; Promise.resolve(fn(st)).then(v => out = v);
+      t.oncomplete = ()=> res(out); t.onerror = ()=> rej(t.error); t.onabort = ()=> rej(t.error);
+    });
+  }
+  const req = r => new Promise((res, rej)=>{ r.onsuccess = ()=> res(r.result); r.onerror = ()=> rej(r.error); });
+  return {
+    async all(){
+      const list = await tx('readonly', st => st ? req(st.getAll()) : mem.slice());
+      return (list || []).sort((a, b)=> b.at - a.at);
+    },
+    put(item){
+      const clean = JSON.parse(JSON.stringify(item));
+      return tx('readwrite', st => st ? req(st.put(clean)) : (mem = mem.filter(x => x.id !== clean.id).concat(clean))).catch(()=>{});
+    },
+    del(id){ return tx('readwrite', st => st ? req(st.delete(id)) : (mem = mem.filter(x => x.id !== id))).catch(()=>{}); },
+    clear(){ return tx('readwrite', st => st ? req(st.clear()) : (mem = [])).catch(()=>{}); },
+    async migrate(){                     // نقل السجل القديم (آخر 30 دواء) مرة واحدة
+      const old = LS.get(K_HIST, null);
+      if(!Array.isArray(old) || !old.length) return;
+      for(const x of old) await this.put({...x, kind:x.thumb ? 'image' : 'name', status:'ok', query:x.query || '', qa:x.qa || []});
+      LS.del(K_HIST);
+    }
+  };
+})();
+
+const H = { all:[], shown:20, filter:'' };
+const STATUS = {notmed:['لم يُتعرّف على دواء','amber'], error:['فشل البحث','red']};
+const fmtWhen = t => new Date(t).toLocaleString('ar-SA-u-ca-gregory-nu-latn', {day:'numeric', month:'short', year:'numeric', hour:'numeric', minute:'2-digit'});
+const titleOf = x => x.drug?.isMedicine ? (x.drug.nameAr || x.drug.nameEn) : (x.query || (x.kind === 'image' ? 'صورة' : 'بحث'));
+async function renderHistory(){
+  if(!getKey()){ show('historyCard', false); return; }
+  H.all = await Log.all();
+  show('historyCard', H.all.length > 0);
+  $('histCount').textContent = H.all.length ? `(${H.all.length})` : '';
+  const f = H.filter.trim().toLowerCase();
+  const list = f ? H.all.filter(x => [titleOf(x), x.query, x.drug?.nameEn, x.drug?.nameAr,
+                                      ...(x.drug?.activeIngredients || []).map(i => i.name)].join(' ').toLowerCase().includes(f))
+                 : H.all;
+  const part = list.slice(0, H.shown);
+  $('history').innerHTML = part.map(x => {
+    const st = STATUS[x.status];
+    const sub = x.status === 'ok' ? (x.drug.activeIngredients || []).map(i => i.name).join('، ') : (x.error || x.drug?.notMedicineReason || '');
+    return `<div class="h">${x.thumb ? `<img src="${x.thumb}" alt="">` : `<span class="ph">${ico(x.kind === 'image' ? 'camera' : 'search')}</span>`}
+    <button type="button" class="open" data-open="${x.id}"><b>${esc(titleOf(x))}</b>
+      <small>${st ? `<span class="tag ${st[1]} mini">${st[0]}</span> ` : ''}${x.qa?.length ? `💬 ${x.qa.length} · ` : ''}${esc(fmtWhen(x.at))}</small>
+      ${sub ? `<small class="line">${esc(sub)}</small>` : ''}</button>
+    <button type="button" class="del" data-del="${x.id}" aria-label="حذف من السجل">${ico('trash')}</button></div>`;
+  }).join('') || `<p class="sub" style="margin:8px 0">لا توجد نتائج لـ «${esc(H.filter)}»</p>`;
+  show('histMore', list.length > H.shown);
+  $('histMore').textContent = `عرض المزيد (${list.length - H.shown})`;
 }
-function renderHistory(){
-  const h = getKey() ? LS.get(K_HIST, []) : [];
-  show('historyCard', h.length > 0);
-  $('history').innerHTML = h.map(x => `<div class="h">${x.thumb ? `<img src="${x.thumb}" alt="">` : `<span class="ph">${ico('pill')}</span>`}
-    <button type="button" class="open" data-open="${x.id}"><b>${esc(x.drug.nameAr || x.drug.nameEn)}</b><small>${esc((x.drug.activeIngredients || []).map(i => i.name).join('، '))} · ${new Date(x.at).toLocaleDateString('ar-SA-u-ca-gregory-nu-latn', {day:'numeric', month:'long'})}</small></button>
-    <button type="button" class="del" data-del="${x.id}" aria-label="حذف من السجل">${ico('trash')}</button></div>`).join('');
-}
-$('history').addEventListener('click', e=>{
+$('histFilter').addEventListener('input', e=>{ H.filter = e.target.value; H.shown = 20; renderHistory(); });
+$('histMore').addEventListener('click', ()=>{ H.shown += 30; renderHistory(); });
+$('history').addEventListener('click', async e=>{
   const o = e.target.closest('[data-open]'), d = e.target.closest('[data-del]');
-  const h = LS.get(K_HIST, []);
-  if(d){ LS.set(K_HIST, h.filter(x => x.id !== +d.dataset.del)); renderHistory(); return; }
-  if(o){ const x = h.find(i => i.id === +o.dataset.open); if(x){ S.current = x; S.qa = []; renderResult(); } }
+  if(d){ await Log.del(+d.dataset.del); renderHistory(); return; }
+  if(!o) return;
+  const x = H.all.find(i => i.id === +o.dataset.open);
+  if(!x) return;
+  if(x.drug){ S.current = x; S.qa = x.qa || (x.qa = []); renderResult(); return; }
+  if(x.query){ $('nameInput').value = x.query; run({image:null, name:x.query}); return; }   // بحث فاشل بالاسم ← نعيده
+  toast('هذا بحث بالصورة لم يكتمل. صوّر العبوة مرة أخرى.', true);
 });
+
+/* نسخة احتياطية من السجل (ملف) واستعادتها */
+$('histExport').addEventListener('click', async ()=>{
+  const data = JSON.stringify({app:'dawaak', version:1, exported:new Date().toISOString(), searches:await Log.all()});
+  const name = `سجل-دوائي-${new Date().toISOString().slice(0, 10)}.json`;
+  const file = new File([data], name, {type:'application/json'});
+  try{
+    if(navigator.canShare?.({files:[file]})){ await navigator.share({files:[file], title:'سجل افهم دواءك'}); return; }
+  }catch(e){ if(e.name === 'AbortError') return; }
+  const a = document.createElement('a'); a.href = URL.createObjectURL(file); a.download = name; a.click();
+  setTimeout(()=> URL.revokeObjectURL(a.href), 4000);
+});
+$('histImport').addEventListener('click', ()=> $('histFile').click());
+$('histFile').addEventListener('change', async e=>{
+  const f = e.target.files[0]; e.target.value = '';
+  if(!f) return;
+  try{
+    const j = JSON.parse(await f.text());
+    const items = (j.searches || []).filter(x => x && x.id && x.at);
+    for(const x of items) await Log.put(x);
+    toast(`استُعيد ${items.length} بحث`); $('settings').close(); renderHistory();
+  }catch(err){ toast('الملف غير صالح', true); }
+});
+
+Log.migrate().then(renderHistory);
 
 refreshHome();
